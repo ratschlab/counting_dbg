@@ -3,58 +3,57 @@
 ```bash
 KMC=~/projects/projects2014-metagenome/metagraph/build_release/KMC/kmc;
 DIR=~/metagenome/data/kingsford_21;
-mkdir $DIR/kmc_21_filtered;
+# rm -r $DIR/kmc_21_filtered_2gb;
+mkdir $DIR/kmc_21_filtered_2gb;
 mkdir $DIR/logs;
 
 for cutoff in {1,3,10,20,50}; do
   ids=$DIR/kingsford_${cutoff}.txt;
-  bsub -J "filter[1-$(cat $ids | wc -l)]%100" \
-       -o $DIR/logs/kmc_count.lsf \
+  bsub -J "filter[1-$(cat $ids | wc -l)]%800" \
+       -o $DIR/logs/kmc_count_2gb.lsf \
        -W 4:00 \
-       -n 1 -R "rusage[mem=8000] span[hosts=1]" \
+       -n 1 -R "rusage[mem=5000] span[hosts=1] select[model==XeonGold_6140]" \
             "id=\\\$(sed -n \${LSB_JOBINDEX}p $ids); \
             mkdir ~/metagenome/scratch/nobackup/stripe_1/\\\${id}.kmc_cache; \
             file=~/metagenome/raw_data/kingsford/data_fasta/\\\${id}.fasta.gz; \
-            /usr/bin/time -v $KMC -k21 -m6 -sm -ci$cutoff -fm -t2 \
+            /usr/bin/time -v $KMC -k21 -m1 -sm -ci$cutoff -fm -t2 \
                 \\\${file} \
-                $DIR/kmc_21_filtered/\\\$id \
+                $DIR/kmc_21_filtered_2gb/\\\$id \
                 ~/metagenome/scratch/nobackup/stripe_1/\\\${id}.kmc_cache \
-            2>&1 | tee $DIR/kmc_21_filtered/\\\${id}.log;
+            2>&1 | tee $DIR/kmc_21_filtered_2gb/\\\${id}.log;
             rm -r ~/metagenome/scratch/nobackup/stripe_1/\\\${id}.kmc_cache"
 done
-
-find $DIR/kmc_21_filtered -name "*kmc_suf" > $DIR/kmc_list.txt
 
 mkdir $DIR/unitigs;
 
 METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
 bsub -J "build_single[1-2652]%500" \
+     -w "filter*" \
      -o $DIR/logs/build_single.lsf \
      -W 4:00 \
-     -n 4 -R "rusage[mem=10000] span[hosts=1]" \
-        "file=\\\$(sed -n \${LSB_JOBINDEX}p $DIR/kmc_list.txt); \
+     -n 1 -R "rusage[mem=20000] span[hosts=1] select[model==XeonGold_6140]" \
+        "id=\\\$(sed -n \${LSB_JOBINDEX}p $DIR/kingsford.txt); \
+        file=$DIR/kmc_21_filtered/\\\${id}.kmc_suf; \
         /usr/bin/time -v $METAGRAPH build \
             -k 21 \
             --mode canonical \
             --mem-cap-gb 8 \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
-            -p 8 \
+            -p 2 \
             -o $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}) \
-            \\\$file \
-        2>&1 | tee $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).log; \
+            \\\$file; \
         /usr/bin/time -v $METAGRAPH transform \
             --to-fasta --primary-kmers \
-            -p 8 \
+            -p 2 \
             -o $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}) \
-            $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).dbg \
-        2>&1 | tee -a $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).log; \
+            $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).dbg; \
         rm $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).dbg*"
 
 bsub -J "build_graph" \
      -w "build_single" \
      -oo $DIR/logs/build_graph.lsf \
      -W 4:00 \
-     -n 36 -R "rusage[mem=3000] span[hosts=1]" \
+     -n 36 -R "rusage[mem=3000] span[hosts=1] select[model==XeonGold_6140]" \
     "find $DIR/unitigs -name \"*.fasta.gz\" \
         | /usr/bin/time -v $METAGRAPH build -v \
             -k 21 \
@@ -62,14 +61,12 @@ bsub -J "build_graph" \
             --mem-cap-gb 50 \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -p 72 \
-            -o $DIR/kingsford_canonical \
-            2>&1 | tee $DIR/logs/build_graph.log; \
+            -o $DIR/kingsford_canonical; \
     /usr/bin/time -v $METAGRAPH transform -v \
             --to-fasta --primary-kmers \
             -o $DIR/kingsford_primary \
             $DIR/kingsford_canonical.dbg \
-            -p 72 \
-            2>&1 | tee -a $DIR/logs/build_graph.log; \
+            -p 36; \
     rm $DIR/kingsford_canonical.dbg; \
     /usr/bin/time -v $METAGRAPH build -v \
             -k 21 \
@@ -78,9 +75,13 @@ bsub -J "build_graph" \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -p 72 \
             -o $DIR/kingsford \
-            $DIR/kingsford_primary.fasta.gz \
-            2>&1 | tee -a $DIR/logs/build_graph.log; \
-    rm $DIR/kingsford_primary.fasta.gz"
+            $DIR/kingsford_primary.fasta.gz; \
+    rm $DIR/kingsford_primary.fasta.gz; \
+    /usr/bin/time -v $METAGRAPH transform -v \
+            --state small \
+            -o $DIR/kingsford_small \
+            $DIR/kingsford.dbg \
+            -p 72"
 ```
 
 
@@ -96,27 +97,27 @@ mkdir $DIR/unitigs;
 
 METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
 bsub -J "build_single_${WINDOW_SIZE}[1-2652]%500" \
+     -w "filter*" \
      -o $DIR/logs/build_single.lsf \
      -W 4:00 \
-     -n 4 -R "rusage[mem=10000] span[hosts=1]" \
-        "file=\\\$(sed -n \${LSB_JOBINDEX}p $DIR/../kmc_list.txt); \
+     -n 1 -R "rusage[mem=20000] span[hosts=1] select[model==XeonGold_6140]" \
+        "id=\\\$(sed -n \${LSB_JOBINDEX}p $DIR/../kingsford.txt); \
+        file=$DIR/../kmc_21_filtered/\\\${id}.kmc_suf; \
         /usr/bin/time -v $METAGRAPH build -v \
             -k 21 \
             --mode canonical \
             --count-kmers --count-width 32 \
             --mem-cap-gb 8 \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
-            -p 8 \
+            -p 2 \
             -o $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}) \
-            \\\$file \
-        2>&1 | tee $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).log; \
+            \\\$file; \
         /usr/bin/time -v $METAGRAPH clean -v \
             --to-fasta --primary-kmers \
             --smoothing-window ${WINDOW_SIZE} \
-            -p 8 \
+            -p 2 \
             -o $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}) \
-            $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).dbg \
-        2>&1 | tee -a $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).log; \
+            $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).dbg; \
         rm $DIR/unitigs/\\\$(basename \\\${file%.kmc_suf}).dbg*"
 
 DIR=~/metagenome/data/kingsford_21/smoothing_${WINDOW_SIZE};
@@ -126,19 +127,19 @@ bsub -J "split_${WINDOW_SIZE}" \
         "cd $DIR; \
         mkdir -p batches; \
         cd batches; \
-        split -d -n r/40 <(find $DIR/unitigs -name "*.fasta.gz" | shuf); \
+        split -d -n r/10 <(find $DIR/unitigs -name "*.fasta.gz" | shuf); \
         mkdir -p ${DIR}/columns;";
 
 DIR=~/metagenome/data/kingsford_21/smoothing_${WINDOW_SIZE};
 METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
-for N in {0..39}; do
+for N in {0..9}; do
     N=$(printf "%02d" $N);
     list=x$N;
-    bsub -J "kingsford_annotate_${list}" \
-         -w "split_${WINDOW_SIZE}" \
+    bsub -J "annotate_${WINDOW_SIZE}_${list}" \
+         -w "split_${WINDOW_SIZE} && build_graph" \
          -oo ${DIR}/logs/annotate_${list}.lsf \
          -W 4:00 \
-         -n 18 -R "rusage[mem=1500] span[hosts=1]" \
+         -n 18 -R "rusage[mem=1500] span[hosts=1] select[model==XeonGold_6140]" \
         "cat $DIR/batches/${list} \
             | /usr/bin/time -v $METAGRAPH annotate \
                 -i $DIR/../kingsford.dbg \
@@ -146,18 +147,15 @@ for N in {0..39}; do
                 --separately \
                 --count-kmers --count-width 32 \
                 -o ${DIR}/columns \
-                -p 36 \
-                2>&1 | tee ${DIR}/logs/annotate_${list}.log"; \
+                -p 36"; \
 done
 
-# WINDOW_SIZE=1;
-WINDOW_SIZE=1000000000;
+WINDOW_SIZE=1;
+# WINDOW_SIZE=1000000000;
 
-git checkout 7a9027fa8c6c29742c7885f77f90d414c39c5b53
-EXP=fork_opt;
-METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_test/metagraph;
-DIR=~/metagenome/data/kingsford_21/smoothing_${WINDOW_SIZE}_${EXP};
-rm -r $DIR;
+# git checkout 7a9027fa8c6c29742c7885f77f90d414c39c5b53
+DIR=~/metagenome/data/kingsford_21/smoothing_${WINDOW_SIZE}_new_enc;
+# rm -r $DIR;
 mkdir $DIR;
 mkdir $DIR/rd;
 mkdir $DIR/logs;
@@ -165,10 +163,11 @@ mkdir $DIR/rd/rd_columns;
 ln -s ~/metagenome/data/kingsford_21/kingsford.dbg ${DIR}/rd/graph.dbg;
 
 
-bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_0" \
-     -oo ${DIR}/logs/count_rd_0.lsf \
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_test/metagraph;
+bsub -J "count_${WINDOW_SIZE}_rd_brwt" \
+     -oo ${DIR}/logs/count_rd_brwt.lsf \
      -W 24:00 \
-     -n 36 -R "rusage[mem=19000] span[hosts=1]" \
+     -n 36 -R "rusage[mem=19000] span[hosts=1] select[model==XeonGold_6140]" \
     "find ${DIR}/../smoothing_${WINDOW_SIZE}/columns -name \"*.column.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff --count-kmers \
@@ -177,15 +176,8 @@ bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_0" \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/rd/rd_columns/out \
-            -p 72 \
-            2>&1 | tee ${DIR}/logs/count_rd_0.log";
-
-bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_1" \
-     -w "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_0" \
-     -oo ${DIR}/logs/count_rd_1.lsf \
-     -W 24:00 \
-     -n 36 -R "rusage[mem=19000] span[hosts=1]" \
-    "find ${DIR}/../smoothing_${WINDOW_SIZE}/columns -name \"*.column.annodbg\" \
+            -p 72; \
+    find ${DIR}/../smoothing_${WINDOW_SIZE}/columns -name \"*.column.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff --count-kmers \
             --row-diff-stage 1 \
@@ -193,15 +185,8 @@ bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_1" \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/rd/rd_columns/out \
-            -p 72 \
-            2>&1 | tee ${DIR}/logs/count_rd_1.log";
-
-bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_2" \
-     -w "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_1" \
-     -oo ${DIR}/logs/count_rd_2.lsf \
-     -W 24:00 \
-     -n 36 -R "rusage[mem=19000] span[hosts=1]" \
-    "find ${DIR}/../smoothing_${WINDOW_SIZE}/columns -name \"*.column.annodbg\" \
+            -p 72; \
+    find ${DIR}/../smoothing_${WINDOW_SIZE}/columns -name \"*.column.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff --count-kmers \
             --row-diff-stage 2 \
@@ -209,70 +194,56 @@ bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_2" \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/rd/rd_columns/out \
-            -p 72 \
-            2>&1 | tee ${DIR}/logs/count_rd_2.log";
-
-bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_brwt" \
-     -w "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_2" \
-     -oo ${DIR}/logs/count_rd_brwt.lsf \
-     -W 24:00 \
-     -n 36 -R "rusage[mem=4000] span[hosts=1]" \
-    "find ${DIR}/rd/rd_columns -name \"*.column.annodbg\" \
+            -p 72; \
+    find ${DIR}/rd/rd_columns -name \"*.column.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff_int_brwt \
             --greedy --fast --subsample 1000000 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/annotation \
-            -p 72 --parallel-nodes 10 \
-            2>&1 | tee ${DIR}/logs/count_rd_brwt.log";
-
-bsub -J "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_brwt_relax" \
-     -w "${EXP}_kingsford_count_${WINDOW_SIZE}_rd_brwt" \
-     -oo ${DIR}/logs/count_rd_brwt_relax.lsf \
-     -W 24:00 \
-     -n 12 -R "rusage[mem=5000] span[hosts=1]" \
-    "/usr/bin/time -v $METAGRAPH relax_brwt -v \
-            -p 24 \
+            -p 72 --parallel-nodes 10; \
+    /usr/bin/time -v $METAGRAPH relax_brwt -v \
+            -p 72 \
             --relax-arity 32 \
             -o ${DIR}/annotation.relaxed \
-            ${DIR}/annotation.row_diff_int_brwt.annodbg \
-            2>&1 | tee ${DIR}/logs/count_rd_brwt_relax.log";
+            ${DIR}/annotation.row_diff_int_brwt.annodbg";
 ```
 
 ### Query
 
 ```bash
 DIR=~/metagenome/data/kingsford_21;
+
 METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_test/metagraph;
 bsub -J "kingsford_query_old" \
-     -oo ${DIR}/logs/query_rd_brwt_relax_old.lsf \
+     -oo ${DIR}/logs/query_rd_brwt_old.lsf \
      -W 4:00 \
-     -n 1 -R "rusage[mem=30000] span[hosts=1]" \
+     -n 36 -R "rusage[mem=8000] span[hosts=1] select[model==XeonGold_6140]" \
     "/usr/bin/time -v $METAGRAPH query --count-labels --fast -v \
-            -i ${DIR}/kingsford_small.dbg \
-            -a ${DIR}/annotation_old.relaxed.row_diff_brwt.annodbg \
-            ~/projects/projects2014-metagenome/metagraph/tests/data/transcripts_100.fa \
-            2>&1 | tee ${DIR}/logs/query_rd_brwt_relax_old.log";
+            --discovery-fraction 0 \
+            -i ~/metagenome/finished_projects/counting_dbg/kingsford_21/kingsford_small.dbg \
+            -a ~/metagenome/finished_projects/counting_dbg/kingsford_21/annotation_old.relaxed.row_diff_brwt.annodbg \
+            ~/projects/projects2014-metagenome/metagraph/tests/data/transcripts_100.fa";
+
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
 bsub -J "kingsford_query" \
-     -oo ${DIR}/logs/query_rd_brwt_relax.lsf \
+     -oo ${DIR}/logs/query_rd_brwt.lsf \
      -W 4:00 \
-     -n 1 -R "rusage[mem=30000] span[hosts=1]" \
+     -n 36 -R "rusage[mem=8000] span[hosts=1] select[model==XeonGold_6140]" \
     "/usr/bin/time -v $METAGRAPH query --count-labels --fast -v \
+            --discovery-fraction 0 \
             -i ${DIR}/kingsford_small.dbg \
             -a ${DIR}/annotation.relaxed.row_diff_brwt.annodbg \
-            ~/projects/projects2014-metagenome/metagraph/tests/data/transcripts_100.fa \
-            2>&1 | tee ${DIR}/logs/query_rd_brwt_relax.log";
-
+            ~/projects/projects2014-metagenome/metagraph/tests/data/transcripts_100.fa";
 
 for WINDOW_SIZE in {1,1000000000}; do
     DIR=~/metagenome/data/kingsford_21/smoothing_${WINDOW_SIZE};
-    METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
-
     bsub -J "kingsford_count_query" \
-         -oo ${DIR}/logs/query_count_rd_brwt_relax.lsf \
+         -oo ${DIR}/logs/query_count_rd_brwt.lsf \
          -W 4:00 \
          -n 36 -R "rusage[mem=2000] span[hosts=1] select[model==XeonGold_6140]" \
-        "/usr/bin/time -v $METAGRAPH query --count-labels --count-kmers --fast -v \
+        "/usr/bin/time -v $METAGRAPH query --count-labels --query-counts --fast -v \
+                --discovery-fraction 0 \
                 -i ${DIR}/../kingsford_small.dbg \
                 -a ${DIR}/annotation.relaxed.row_diff_int_brwt.annodbg \
                 ~/projects/projects2014-metagenome/metagraph/tests/data/transcripts_100.fa";
@@ -284,18 +255,38 @@ done
 
 ```bash
 DIR=~/metagenome/data/kingsford_21;
+
+mkdir ${DIR}/columns;
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
+for N in {0..9}; do
+    N=$(printf "%02d" $N);
+    list=x$N;
+    bsub -J "annotate_${list}" \
+         -w "split_1 && build_graph" \
+         -oo ${DIR}/logs/annotate_${list}.lsf \
+         -W 4:00 \
+         -n 18 -R "rusage[mem=1500] span[hosts=1] select[model==XeonGold_6140]" \
+        "cat $DIR/smoothing_1/batches/${list} \
+            | /usr/bin/time -v $METAGRAPH annotate \
+                -i $DIR/kingsford.dbg \
+                --anno-filename \
+                --separately \
+                -o ${DIR}/columns \
+                -p 36"; \
+done
+
+DIR=~/metagenome/data/kingsford_21;
+mkdir $DIR;
 mkdir $DIR/rd;
 mkdir $DIR/rd/rd_columns;
 ln -s ~/metagenome/data/kingsford_21/kingsford.dbg ${DIR}/rd/graph.dbg;
 
-DIR=~/metagenome/data/kingsford_21;
 METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
-bsub -J "kingsford_rd_0" \
-     -w "kingsford_annotate_*" \
-     -oo ${DIR}/logs/rd_0.lsf \
+bsub -J "kingsford_rd_brwt" \
+     -oo ${DIR}/logs/rd_brwt.lsf \
      -W 24:00 \
-     -n 36 -R "rusage[mem=19000] span[hosts=1]" \
-    "find ${DIR}/smoothing_1/columns -name \"*.column.annodbg\" \
+     -n 36 -R "rusage[mem=19000] span[hosts=1] select[model==XeonGold_6140]" \
+    "find ${DIR}/columns -name \"*.column.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff \
             --row-diff-stage 0 \
@@ -303,17 +294,8 @@ bsub -J "kingsford_rd_0" \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/rd/rd_columns/out \
-            -p 72 \
-            2>&1 | tee ${DIR}/logs/rd_0.log";
-
-DIR=~/metagenome/data/kingsford_21;
-METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
-bsub -J "kingsford_rd_1" \
-     -w "kingsford_rd_0" \
-     -oo ${DIR}/logs/rd_1.lsf \
-     -W 24:00 \
-     -n 36 -R "rusage[mem=19000] span[hosts=1]" \
-    "find ${DIR}/smoothing_1/columns -name \"*.column.annodbg\" \
+            -p 72; \
+    find ${DIR}/columns -name \"*.column.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff \
             --row-diff-stage 1 \
@@ -321,17 +303,8 @@ bsub -J "kingsford_rd_1" \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/rd/rd_columns/out \
-            -p 72 \
-            2>&1 | tee ${DIR}/logs/rd_1.log";
-
-DIR=~/metagenome/data/kingsford_21;
-METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
-bsub -J "kingsford_rd_2" \
-     -w "kingsford_rd_1" \
-     -oo ${DIR}/logs/rd_2.lsf \
-     -W 24:00 \
-     -n 36 -R "rusage[mem=19000] span[hosts=1]" \
-    "find ${DIR}/smoothing_1/columns -name \"*.column.annodbg\" \
+            -p 72; \
+    find ${DIR}/columns -name \"*.column.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff \
             --row-diff-stage 2 \
@@ -339,38 +312,19 @@ bsub -J "kingsford_rd_2" \
             --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/rd/rd_columns/out \
-            -p 72 \
-            2>&1 | tee ${DIR}/logs/rd_2.log";
-
-DIR=~/metagenome/data/kingsford_21;
-METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
-bsub -J "kingsford_rd_brwt" \
-     -w "kingsford_rd_2" \
-     -oo ${DIR}/logs/rd_brwt.lsf \
-     -W 24:00 \
-     -n 36 -R "rusage[mem=4000] span[hosts=1]" \
-    "find ${DIR}/rd/rd_columns -name \"*.row_diff.annodbg\" \
+            -p 72; \
+    find ${DIR}/rd/rd_columns -name \"*.row_diff.annodbg\" \
         | /usr/bin/time -v $METAGRAPH transform_anno -v \
             --anno-type row_diff_brwt \
             --greedy --fast --subsample 1000000 \
             -i ${DIR}/rd/graph.dbg \
             -o ${DIR}/annotation \
-            -p 72 --parallel-nodes 10 \
-            2>&1 | tee ${DIR}/logs/rd_brwt.log";
-
-DIR=~/metagenome/data/kingsford_21;
-METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_release/metagraph;
-bsub -J "kingsford_rd_brwt_relax" \
-     -w "kingsford_rd_brwt" \
-     -oo ${DIR}/logs/rd_brwt_relax.lsf \
-     -W 24:00 \
-     -n 12 -R "rusage[mem=5000] span[hosts=1]" \
-    "/usr/bin/time -v $METAGRAPH relax_brwt -v \
-            -p 24 \
+            -p 72 --parallel-nodes 10; \
+    /usr/bin/time -v $METAGRAPH relax_brwt -v \
+            -p 72 \
             --relax-arity 32 \
             -o ${DIR}/annotation.relaxed \
-            ${DIR}/annotation.row_diff_brwt.annodbg \
-            2>&1 | tee ${DIR}/logs/rd_brwt_relax.log";
+            ${DIR}/annotation.row_diff_brwt.annodbg";
 ```
 
 
@@ -496,7 +450,7 @@ bsub -J "spring[1-4132]" \
           done"
 
 
-DIR=~/metagenome/data/hifi_sra/viruses_hifi_data;
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data;
 mkdir $DIR/blast;
 mkdir $DIR/blast/logs;
 
@@ -589,11 +543,12 @@ bsub -J "pufferfish_sparse[1354]" \
           done"
 
 
-DIR=~/metagenome/data/hifi_sra/viruses_hifi_data;
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data;
 mkdir $DIR/megablast;
 mkdir $DIR/megablast/logs;
 
 bsub -J "megablast[1-4132]" \
+     -w "blast[*]" \
      -o $DIR/megablast/logs/build_database.lsf \
      -W 24:00 \
      -n 4 -R "rusage[mem=10000] span[hosts=1]" \
@@ -611,18 +566,40 @@ bsub -J "megablast[1-4132]" \
 ```bash
 K=31
 DIR=~/metagenome/data/hifi_sra/viruses_hifi_data/mtg;
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/mtg_fork_opt;
 mkdir $DIR;
 mkdir $DIR/logs;
 
-list=~/metagenome/data/hifi_sra/viruses_hifi_data/list.txt;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
 
-METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5/metagraph;
-NUM_THREADS=36;
-# bsub -J "construct_${K}_[1-10]" \
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5_test/metagraph;
+bsub -J "build_${K}_[1-4132]" \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=20000] span[hosts=1]" \
+    "for i in \\\$(seq \\\$((\\\${LSB_JOBINDEX} * 37 - 37 + 1)) \\\$((\\\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir ${DIR}/\\\${id:0:6}; \
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}; \
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}/logs; \
+        /usr/bin/time -v $METAGRAPH transform -v \
+                --index-ranges 1 \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/graph \
+                ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg; \
+        /usr/bin/time -v $METAGRAPH transform -v \
+                --state small \
+                --index-ranges 1 \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/graph_small \
+                ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg; \
+    done"
+
+
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5_test/metagraph;
+NUM_THREADS=18;
 bsub -J "build_${K}_[1-4132]" \
      -o ${DIR}/logs/construct_${K}.lsf \
      -W 24:00 \
-     -n 36 -R "rusage[mem=19000] span[hosts=1]" \
+     -n 18 -R "rusage[mem=10000] span[hosts=1]" \
     "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
         file=\\\$(sed -n \\\${i}p $list); \
         id=\\\$(basename \\\${file%.fastq.gz}); \
@@ -640,7 +617,7 @@ bsub -J "build_${K}_[1-4132]" \
 
         /usr/bin/time -v $METAGRAPH transform -v -p $NUM_THREADS \
                 --state small \
-                --index-ranges 0 \
+                --index-ranges 1 \
                 -o ${DIR}/\\\${id:0:6}/\\\${id}/graph_small \
                 ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
                 2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/transform.log; \
@@ -698,16 +675,34 @@ bsub -J "build_${K}_[1-4132]" \
         rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.succ_boundary; \
         rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.pred; \
         rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.pred_boundary; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v \
+                --anno-type row_diff_coord \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/annotation \
+                ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/annotation.column.annodbg; \
     done"
 
-NUM_THREADS=8;
-bsub -J "build_${K}_[1-4132]" \
-     -o /dev/null \
-     -W 4:00 \
-     -n 4 -R "rusage[mem=19000] span[hosts=1]" \
+NUM_THREADS=36;
+bsub -J "build_${K}_rerun_[1-4132]" \
+     -w "exit(build_${K}_[*])" \
+     -o ${DIR}/logs/construct_${K}_rerun.lsf \
+     -W 24:00 \
+     -n 36 -R "rusage[mem=10000] span[hosts=1]" \
     "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
         file=\\\$(sed -n \\\${i}p $list); \
         id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir ${DIR}/\\\${id:0:6}/; \
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}; \
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}/logs; \
+
+        /usr/bin/time -v $METAGRAPH build -v -p $NUM_THREADS \
+                -k ${K} \
+                --mem-cap-gb 40 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/graph \
+                \\\$file \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/build.log; \
 
         /usr/bin/time -v $METAGRAPH transform -v -p $NUM_THREADS \
                 --state small \
@@ -716,13 +711,434 @@ bsub -J "build_${K}_[1-4132]" \
                 ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
                 2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/transform.log; \
 
+        /usr/bin/time -v $METAGRAPH annotate -v -p $NUM_THREADS \
+                --coordinates \
+                --anno-filename \
+                --mem-cap-gb 40 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/annotation \
+                \\\$file \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/annotate.log; \
+
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
+                --anno-type row_diff --coordinates \
+                --max-path-length 200 \
+                --row-diff-stage 0 \
+                --mem-cap-gb 200 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/out \
+                ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/coord_rd_1.log; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
+                --anno-type row_diff --coordinates \
+                --max-path-length 200 \
+                --row-diff-stage 1 \
+                --mem-cap-gb 200 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/out \
+                ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/coord_rd_2.log; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
+                --anno-type row_diff --coordinates \
+                --max-path-length 200 \
+                --row-diff-stage 2 \
+                --mem-cap-gb 200 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/out \
+                ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/coord_rd_3.log; \
+
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg.coords; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/annotation.row_count; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/annotation.row_reduction; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.succ; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.succ_boundary; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.pred; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.pred_boundary; \
+
         /usr/bin/time -v $METAGRAPH transform_anno -v \
                 --anno-type row_diff_coord \
                 -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
                 -o ${DIR}/\\\${id:0:6}/\\\${id}/annotation \
                 ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/annotation.column.annodbg; \
     done"
-```
+
+
+bsub -J "build_${K}_rerun2_[1-4132]" \
+     -w "exit(build_${K}_[*]) && exit(build_${K}_rerun_[*])" \
+     -o ${DIR}/logs/construct_${K}_rerun2.lsf \
+     -W 24:00 \
+     -n 36 -R "rusage[mem=40000] span[hosts=1]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir ${DIR}/\\\${id:0:6}/; \
+        rm -r ${DIR}/\\\${id:0:6}/\\\${id}; \
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}; \
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}/logs; \
+
+        /usr/bin/time -v $METAGRAPH build -v -p $NUM_THREADS \
+                -k ${K} \
+                --mem-cap-gb 40 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/graph \
+                \\\$file \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/build.log; \
+
+        /usr/bin/time -v $METAGRAPH transform -v -p $NUM_THREADS \
+                --state small \
+                --index-ranges 1 \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/graph_small \
+                ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/transform.log; \
+
+        /usr/bin/time -v $METAGRAPH annotate -v -p $NUM_THREADS \
+                --coordinates \
+                --anno-filename \
+                --mem-cap-gb 40 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/annotation \
+                \\\$file \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/annotate.log; \
+
+        mkdir ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
+                --anno-type row_diff --coordinates \
+                --max-path-length 200 \
+                --row-diff-stage 0 \
+                --mem-cap-gb 200 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/out \
+                ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/coord_rd_1.log; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
+                --anno-type row_diff --coordinates \
+                --max-path-length 200 \
+                --row-diff-stage 1 \
+                --mem-cap-gb 200 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/out \
+                ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/coord_rd_2.log; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
+                --anno-type row_diff --coordinates \
+                --max-path-length 200 \
+                --row-diff-stage 2 \
+                --mem-cap-gb 200 \
+                --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/out \
+                ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg \
+                2> ${DIR}/\\\${id:0:6}/\\\${id}/logs/coord_rd_3.log; \
+
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/annotation.column.annodbg.coords; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/annotation.row_count; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/annotation.row_reduction; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.succ; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.succ_boundary; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.pred; \
+        rm ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg.pred_boundary; \
+
+        /usr/bin/time -v $METAGRAPH transform_anno -v \
+                --anno-type row_diff_coord \
+                -i ${DIR}/\\\${id:0:6}/\\\${id}/graph.dbg \
+                -o ${DIR}/\\\${id:0:6}/\\\${id}/annotation \
+                ${DIR}/\\\${id:0:6}/\\\${id}/rd_columns/annotation.column.annodbg; \
+    done"
+
+
+### Query
+K=31
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/mtg;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5/metagraph;
+
+bsub -J "query_[1-4132]" \
+     -o ${DIR}/logs/delta_variants_query.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=40000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+
+        mkdir /scratch/mtg_\\\${id}; \
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/graph_small.dbg /scratch/mtg_\\\${id}/;
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/annotation.row_diff_coord.annodbg /scratch/mtg_\\\${id}/;
+        echo \\\${id} \\\$(/usr/bin/time -v $METAGRAPH query -v \
+                --query-coords \
+                -i /scratch/mtg_\\\${id}/graph_small.dbg \
+                -a /scratch/mtg_\\\${id}/annotation.row_diff_coord.annodbg \
+                ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                2>&1 1>/dev/null | sed '8q;d' | cut -d' ' -f8) >> ${DIR}/delta_variants_query.times; \
+        rm -r /scratch/mtg_\\\${id}; \
+    done"
+
+K=31
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/mtg;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5/metagraph;
+
+bsub -J "align_[1-4132]" \
+     -o ${DIR}/logs/delta_variants_align.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=200000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+
+        mkdir /scratch/mtg_\\\${id}; \
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/graph_small.dbg /scratch/mtg_\\\${id}/;
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/annotation.row_diff_coord.annodbg /scratch/mtg_\\\${id}/;
+        echo \\\${id} \\\$(/usr/bin/time -v $METAGRAPH align -v \
+                --align-chain --align-max-seed-length 19 \
+                -i /scratch/mtg_\\\${id}/graph_small.dbg \
+                -a /scratch/mtg_\\\${id}/annotation.row_diff_coord.annodbg \
+                ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                2>&1 1>/dev/null | tail -n 19 | sed '1q;d' | cut -d' ' -f8) >> ${DIR}/delta_variants_align.times; \
+        rm -r /scratch/mtg_\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/megablast;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "query_[1-4132]" \
+     -o ${DIR}/logs/delta_variants_query.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=19000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/\\\${id}; \
+        cp -H ${DIR}/\\\${id:0:6}/\\\${id}/* /scratch/\\\${id}/; \
+        echo \\\${id} \\\$(/usr/bin/time -v blastn \
+                -query ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -db /scratch/\\\${id}/\\\${id} \
+                -use_index true \
+                -max_hsps 1 -outfmt '6 qseqid qseq sseq bitscore nident btop' \
+                2>&1 1>/dev/null | sed '5q;d' | cut -d' ' -f8) >> ${DIR}/delta_variants_query.times; \
+        rm -r /scratch/\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/blast;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "query_[1-4132]" \
+     -o ${DIR}/logs/delta_variants_query.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=19000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/blast_\\\${id}; \
+        cp -H ${DIR}/\\\${id:0:6}/\\\${id}/* /scratch/blast_\\\${id}/; \
+        echo \\\${id} \\\$(/usr/bin/time -v blastn \
+                -query ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -db /scratch/blast_\\\${id}/\\\${id} \
+                -max_hsps 1 -outfmt '6 qseqid qseq sseq bitscore nident btop' \
+                2>&1 1>/dev/null | sed '5q;d' | cut -d' ' -f8) >> ${DIR}/delta_variants_query.times; \
+        rm -r /scratch/blast_\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/pufferfish_sparse;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "query_[1-4132]" \
+     -o ${DIR}/logs/delta_variants_query.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=200000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/pf_\\\${id}; \
+        cp -r ${DIR}/\\\${id:0:6}/\\\${id}/\\\${id} /scratch/pf_\\\${id}; \
+        echo \\\${id} \\\$(/usr/bin/time -v ~/pufferfish lookup \
+                -r ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -i /scratch/pf_\\\${id}/\\\${id}/ \
+                2>&1 | tail -n 19 | sed '1q;d' | cut -d' ' -f8) >> ${DIR}/delta_variants_query.times; \
+        rm -r /scratch/pf_\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/pufferfish_sparse;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "align_[1-4132]" \
+     -o ${DIR}/logs/delta_variants_align.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=200000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/pf_align_\\\${id}; \
+        cp -r ${DIR}/\\\${id:0:6}/\\\${id}/\\\${id} /scratch/pf_align_\\\${id}; \
+        echo \\\${id} \\\$(/usr/bin/time -v ~/pufferfish align \
+                --read ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -i /scratch/pf_align_\\\${id}/\\\${id}/ \
+                --genomicReads --primaryAlignment -o /dev/null \
+                2>&1 | tail -n 19 | sed '1q;d' | cut -d' ' -f8) >> ${DIR}/delta_variants_align.times; \
+        rm -r /scratch/pf_align_\\\${id}; \
+    done"
+
+
+# Test
+
+K=31
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/mtg;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5/metagraph;
+
+bsub -J "query_[1-1]" \
+     -o ${DIR}/logs/delta_variants_query_1.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=40000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+
+        mkdir /scratch/mtg_\\\${id}; \
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/graph_small.dbg /scratch/mtg_\\\${id}/;
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/annotation.row_diff_coord.annodbg /scratch/mtg_\\\${id}/;
+        /usr/bin/time -v $METAGRAPH query -v \
+                --query-coords \
+                -i /scratch/mtg_\\\${id}/graph_small.dbg \
+                -a /scratch/mtg_\\\${id}/annotation.row_diff_coord.annodbg \
+                ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                2>&1; \
+        rm -r /scratch/mtg_\\\${id}; \
+    done"
+
+
+K=31
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/mtg;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5/metagraph;
+
+bsub -J "align_[1-1]" \
+     -o ${DIR}/logs/delta_variants_align_1_chain_optim.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=40000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+
+        mkdir /scratch/mtg_\\\${id}; \
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/graph_small.dbg /scratch/mtg_\\\${id}/;
+        cp ${DIR}/\\\${id:0:6}/\\\${id}/annotation.row_diff_coord.annodbg /scratch/mtg_\\\${id}/;
+        /usr/bin/time -v $METAGRAPH align -v \
+                --align-chain --align-max-seed-length 19 \
+                -i /scratch/mtg_\\\${id}/graph_small.dbg \
+                -a /scratch/mtg_\\\${id}/annotation.row_diff_coord.annodbg \
+                ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                2>&1; \
+        rm -r /scratch/mtg_\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/megablast;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "query_[1-1]" \
+     -o ${DIR}/logs/delta_variants_query_1.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=19000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/\\\${id}; \
+        cp -H ${DIR}/\\\${id:0:6}/\\\${id}/* /scratch/\\\${id}/; \
+        /usr/bin/time -v blastn \
+                -query ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -db /scratch/\\\${id}/\\\${id} \
+                -use_index true \
+                -max_hsps 1 -outfmt '6 qseqid qseq sseq bitscore nident btop' \
+                2>&1; \
+        rm -r /scratch/\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/blast;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "query_[1-1]" \
+     -o ${DIR}/logs/delta_variants_query_1.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=19000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/blast_\\\${id}; \
+        cp -H ${DIR}/\\\${id:0:6}/\\\${id}/* /scratch/blast_\\\${id}/; \
+        /usr/bin/time -v blastn \
+                -query ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -db /scratch/blast_\\\${id}/\\\${id} \
+                -max_hsps 1 -outfmt '6 qseqid qseq sseq bitscore nident btop' \
+                2>&1; \
+        rm -r /scratch/blast_\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/pufferfish_sparse;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "query_[1-1]" \
+     -o ${DIR}/logs/delta_variants_query_1.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=200000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/pf_\\\${id}; \
+        cp -r ${DIR}/\\\${id:0:6}/\\\${id}/\\\${id} /scratch/pf_\\\${id}; \
+        /usr/bin/time -v ~/pufferfish lookup \
+                -r ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -i /scratch/pf_\\\${id}/\\\${id}/ \
+                2>&1; \
+        rm -r /scratch/pf_\\\${id}; \
+    done"
+
+
+DIR=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/pufferfish_sparse;
+list=~/metagenome/finished_projects/counting_dbg/hifi_sra/viruses_hifi_data/list.txt;
+
+bsub -J "align_[1-1]" \
+     -o ${DIR}/logs/delta_variants_align_1.lsf \
+     -W 24:00 \
+     -n 1 -R "rusage[mem=80000] span[hosts=1] select[model==XeonGold_6140]" \
+    "for i in \\\$(seq \$((\${LSB_JOBINDEX} * 37 - 37 + 1)) \$((\${LSB_JOBINDEX} * 37))); do \
+        file=\\\$(sed -n \\\${i}p $list); \
+        id=\\\$(basename \\\${file%.fastq.gz}); \
+        mkdir /scratch/pf_align_\\\${id}; \
+        cp -r ${DIR}/\\\${id:0:6}/\\\${id}/\\\${id} /scratch/pf_align_\\\${id}; \
+        /usr/bin/time -v ~/pufferfish align \
+                --read ${DIR}/../mtg/joint/query/redo/delta_variants.fa \
+                -i /scratch/pf_align_\\\${id}/\\\${id}/ \
+                --genomicReads --primaryAlignment -o /dev/null \
+                2>&1; \
+        rm -r /scratch/pf_align_\\\${id}; \
+    done"
 
 #### Joint index
 
@@ -959,41 +1375,46 @@ bsub -J "check_spring[1-$(cat ${list} | wc -l)]" \
 ### with Metagraph
 ```bash
 K=31
-DIR=~/metagenome/data/kingsford_${K}_coordinates_fork_opt;
-git checkout 7a9027fa8c6c29742c7885f77f90d414c39c5b53
+DIR=~/metagenome/finished_projects/counting_dbg/kingsford_${K}_coordinates_fork_opt_new;
+# git checkout 7a9027fa8c6c29742c7885f77f90d414c39c5b53
 rm -rf $DIR;
 mkdir $DIR;
 mkdir $DIR/logs;
 
-list=~/metagenome/data/kingsford/compressed/list.txt;
+list=~/metagenome/finished_projects/counting_dbg/kingsford_compressed/list.txt;
 
-rm ~/metagenome/data/kingsford/compressed/list2.txt;
-for file in $(cat ${list}); do
-    if [[ ! -f ${DIR}/$(basename $file)/rd_columns/annotation.column.annodbg.coords ]];
-        then echo $file >> ~/metagenome/data/kingsford/compressed/list2.txt;
-    fi;
-done
-
-list=~/metagenome/data/kingsford/compressed/list2.txt;
+# rm ~/metagenome/data/kingsford/compressed/list2.txt;
+# for file in $(cat ${list}); do
+#     if [[ ! -f ${DIR}/$(basename $file)/rd_columns/annotation.column.annodbg.coords ]];
+#         then echo $file >> ~/metagenome/data/kingsford/compressed/list2.txt;
+#     fi;
+# done
+# list=~/metagenome/data/kingsford/compressed/list2.txt;
 
 METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5_test/metagraph;
-# NUM_THREADS=8;
-# bsub -J "build_graph_${K}_[1-$(cat $list | wc -l)]" \
-#      -o ${DIR}/logs/construct_${K}.lsf \
-#      -W 24:00 \
-#      -n 4 -R "rusage[mem=19000] span[hosts=1]" \
-# NUM_THREADS=36;
-# bsub -J "build_graph_${K}_rerun_[1-$(cat $list | wc -l)]" \
-#      -o ${DIR}/logs/construct_${K}_rerun.lsf \
-#      -w "exit(build_graph_${K}_[*])" \
-#      -W 24:00 \
-#      -n 23 -R "rusage[mem=19000] span[hosts=1]" \
+NUM_THREADS=8;
+bsub -J "build_graph_${K}_[1-$(cat $list | wc -l)]" \
+     -o ${DIR}/logs/construct_${K}.lsf \
+     -W 24:00 \
+     -n 4 -R "rusage[mem=19000] span[hosts=1]" \
+NUM_THREADS=36;
+bsub -J "build_graph_${K}_rerun_[1-$(cat $list | wc -l)]" \
+     -o ${DIR}/logs/construct_${K}_rerun.lsf \
+     -w "exit(build_graph_${K}_[*])" \
+     -W 24:00 \
+     -n 23 -R "rusage[mem=19000] span[hosts=1]" \
 NUM_THREADS=36;
 bsub -J "build_graph_${K}_rerun2_[1-$(cat $list | wc -l)]" \
-     -o ${DIR}/logs/construct_${K}_rerun3.lsf \
+     -o ${DIR}/logs/construct_${K}_rerun2.lsf \
      -w "exit(build_graph_${K}_[*]) && exit(build_graph_${K}_rerun_[*])" \
      -W 48:00 \
      -n 36 -R "rusage[mem=25000] span[hosts=1]" \
+NUM_THREADS=36;
+bsub -J "build_graph_${K}_rerun3_[1-$(cat $list | wc -l)]" \
+     -o ${DIR}/logs/construct_${K}_rerun3.lsf \
+     -w "exit(build_graph_${K}_[*]) && exit(build_graph_${K}_rerun_[*]) && exit(build_graph_${K}_rerun2_[*])" \
+     -W 48:00 \
+     -n 36 -R "rusage[mem=40000] span[hosts=1]" \
     "
     file=\\\$(sed -n \${LSB_JOBINDEX}p $list); \
     L=\\\$(zless \\\$file | head -n 1 | grep -Eo '[0-9]+$'); \
@@ -1086,23 +1507,23 @@ for file in '~/metagenome/data/coordinates_K/data/SRR13577847_subreads.fastq.gz'
               /usr/bin/time -v zcat ${file} | sed -n '1~4s/^@/>/p;2~4p' | sed 's/^>.*/>/' | gzip -9 > ~/metagenome/data/coordinates_K/data/\\\${id}_no_header.fasta.gz"
 done
 
-for file in '~/metagenome/data/coordinates_K/data/SRR11304401_subreads.fastq.gz' \
-            '~/metagenome/data/coordinates_K/data/SRR13684276.fastq.gz' \
-            '~/metagenome/data/coordinates_K/data/SRR13577847_subreads.fastq.gz' \
+for file in '~/metagenome/finished_projects/counting_dbg/coordinates_K/data/SRR11304401_subreads.fastq.gz' \
+            '~/metagenome/finished_projects/counting_dbg/coordinates_K/data/SRR13684276.fastq.gz' \
+            '~/metagenome/finished_projects/counting_dbg/coordinates_K/data/SRR13577847_subreads.fastq.gz' \
             '/cluster/work/grlab/projects/metagenome/data/alignment/completeness/wgs_samples/fq/fq2/SRR4063132/SRR4063132_subreads.fastq.gz' \
             '/cluster/work/grlab/projects/metagenome/data/alignment/completeness/wgs_samples/fq/fq2/SRR386922/SRR386922_subreads.fastq.gz' \
             '/cluster/work/grlab/projects/metagenome/data/alignment/completeness/wgs_samples/fq/fq2/SRR3747284/SRR3747284_subreads.fastq.gz' \
             '/cluster/work/grlab/projects/metagenome/data/alignment/completeness/wgs_samples/fq/fq2/SRR4235456/SRR4235456_subreads.fastq.gz' \
             '/cluster/work/grlab/projects/metagenome/data/alignment/completeness/wgs_samples/fq/fq2/SRR3747411/SRR3747411_subreads.fastq.gz' \
-            '/cluster/home/mikhaika/metagenome/data/kingsford/compressed/SRR805801_no_header.fasta.gz' \
+            '~/metagenome/finished_projects/counting_dbg/kingsford_compressed/SRR805801_no_header.fasta.gz' \
             '/cluster/work/grlab/projects/metagenome/raw_data/human/HG002/PacBio_SequelII_CCS_11kb/m64011_181218_235052.fastq.gz' ; do
-    for K in {16..52..3}; do
+    for K in {31,}; do
         DIR=~/metagenome/data/coordinates_K/$K;
         # rm -rf $DIR;
         mkdir -p $DIR;
-        mkdir $DIR/logs;
+        mkdir -p $DIR/logs;
 
-        METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5/metagraph;
+        METAGRAPH=~/projects/projects2014-metagenome/metagraph/build_dna5_test/metagraph;
         NUM_THREADS=16;
         # bsub -J "construct_${K}_[1-10]" \
         bsub -J "build_graph_${K}" \
@@ -1120,23 +1541,20 @@ for file in '~/metagenome/data/coordinates_K/data/SRR11304401_subreads.fastq.gz'
                     --mem-cap-gb 40 \
                     --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
                     -o ${DIR}/\\\${id}/graph \
-                    \\\$file \
-                    2> ${DIR}/\\\${id}/logs/build.log; \
+                    \\\$file; \
 
             /usr/bin/time -v $METAGRAPH transform -v -p $NUM_THREADS \
                     --state small \
                     --index-ranges 3 \
                     -o ${DIR}/\\\${id}/graph_small \
-                    ${DIR}/\\\${id}/graph.dbg \
-                    2> ${DIR}/\\\${id}/logs/transform.log; \
+                    ${DIR}/\\\${id}/graph.dbg; \
 
             /usr/bin/time -v $METAGRAPH annotate -v -p $NUM_THREADS \
                     --coordinates \
                     --anno-filename \
                     -i ${DIR}/\\\${id}/graph.dbg \
                     -o ${DIR}/\\\${id}/annotation \
-                    \\\$file \
-                    2> ${DIR}/\\\${id}/logs/annotate.log; \
+                    \\\$file; \
 
             mkdir ${DIR}/\\\${id}/rd_columns; \
 
@@ -1148,8 +1566,7 @@ for file in '~/metagenome/data/coordinates_K/data/SRR11304401_subreads.fastq.gz'
                     --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
                     -i ${DIR}/\\\${id}/graph.dbg \
                     -o ${DIR}/\\\${id}/rd_columns/out \
-                    ${DIR}/\\\${id}/annotation.column.annodbg \
-                    2> ${DIR}/\\\${id}/logs/coord_rd_1.log; \
+                    ${DIR}/\\\${id}/annotation.column.annodbg; \
 
             /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
                     --anno-type row_diff --coordinates \
@@ -1159,8 +1576,7 @@ for file in '~/metagenome/data/coordinates_K/data/SRR11304401_subreads.fastq.gz'
                     --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
                     -i ${DIR}/\\\${id}/graph.dbg \
                     -o ${DIR}/\\\${id}/rd_columns/out \
-                    ${DIR}/\\\${id}/annotation.column.annodbg \
-                    2> ${DIR}/\\\${id}/logs/coord_rd_2.log; \
+                    ${DIR}/\\\${id}/annotation.column.annodbg; \
 
             /usr/bin/time -v $METAGRAPH transform_anno -v -p $NUM_THREADS \
                     --anno-type row_diff --coordinates \
@@ -1170,8 +1586,7 @@ for file in '~/metagenome/data/coordinates_K/data/SRR11304401_subreads.fastq.gz'
                     --disk-swap ~/metagenome/scratch/nobackup/stripe_1 \
                     -i ${DIR}/\\\${id}/graph.dbg \
                     -o ${DIR}/\\\${id}/rd_columns/out \
-                    ${DIR}/\\\${id}/annotation.column.annodbg \
-                    2> ${DIR}/\\\${id}/logs/coord_rd_3.log; \
+                    ${DIR}/\\\${id}/annotation.column.annodbg; \
 
             rm ${DIR}/\\\${id}/annotation.column.annodbg; \
             rm ${DIR}/\\\${id}/annotation.column.annodbg.coords; \
@@ -1189,11 +1604,11 @@ done
 
 ```bash
 list=~/metagenome/data/row_diff/subsets/refseq/8.txt
-DIR=~/metagenome/data/refseq_fungi_coord;
+DIR=~/metagenome/finished_projects/counting_dbg/refseq_fungi_coord;
 mkdir $DIR;
 mkdir $DIR/logs;
 
-cat ~/metagenome/data/row_diff/subsets/refseq/8.txt | xargs -P 100 -I {} sh -c "zcat {} | grep '>' | gzip -9 > {}.9"
+cat ~/metagenome/data/row_diff/subsets/refseq/8.txt | xargs -P 100 -I {} sh -c "zcat {} | gzip -9 > {}.9"
 cat ~/metagenome/data/row_diff/subsets/refseq/8.txt | xargs -P 200 -I {} sh -c "zcat {} | grep '>' >> ~/metagenome/data/refseq_fungi_coord/headers.txt"
 cat ~/metagenome/data/row_diff/subsets/refseq/8.txt | xargs -P 200 -I {} sh -c "zcat {} | grep -v '>' | tr -d '\n' | wc -c" | awk "{sum+=\$1}END{print sum}"
 cat ~/metagenome/data/row_diff/subsets/refseq/8.txt | xargs -I {} sh -c "ls -l {}.9" | sizeb
@@ -1350,7 +1765,7 @@ bsub -J "build_graph" \
 
     /usr/bin/time -v $METAGRAPH transform -v -p $NUM_THREADS \
             --state small \
-            --index-ranges 0 \
+            --index-ranges 1 \
             -o ${DIR}/graph_small \
             ${DIR}/graph.dbg \
             2> ${DIR}/logs/transform.log; \
