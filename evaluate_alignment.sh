@@ -19,6 +19,8 @@ ILLUMINA_XDROP=100
 PACBIO_XDROP=27
 ILLUMINA_SEED_LENGTH=10000
 PACBIO_SEED_LENGTH=19
+PACBIO_MIN_EXACT_MATCH=0.02
+ILLUMINA_MIN_EXACT_MATCH=0.7
 
 echo "Simulating Illumina reads"
 art_illumina -ss HS25 -i $INFILE -p -c 1280 -l $ILLUMINA_LENGTH -m 200 -s 10 -o $BASENAME.sim -rs $SEED -sam
@@ -28,8 +30,8 @@ bedtools getfasta -fi $BASENAME.fa -bed <(bedtools bamtobed -i $BASENAME.sim.bam
 reformat.sh in=$BASENAME.sim.illumina.fq out=$BASENAME.sim.illumina.fa fastawrap=-1 overwrite=true
 
 echo "Simulating PacBio reads"
-PBSIM_DEPTH=0.0504 # chr22
-#PBSIM_DEPTH=0.4284 # E. coli
+PBSIM_DEPTH=0.0504 # illumina
+PBSIM_DEPTH=0.4284 # pacbio
 ../pbsim --data-type CLR --depth $PBSIM_DEPTH --model_qc ../model_qc_clr --data-type CLR --length-mean $PACBIO_LENGTH --length-sd 0 --length-min $PACBIO_LENGTH --length-max $PACBIO_LENGTH $BASENAME.fa --prefix $BASENAME --seed $SEED
 cat ${BASENAME}_0001.fastq | paste - - - - | awk '!($2~/N/)' | shuf --random-source=../seed | tr "\t" "\n" > $BASENAME.sim.pacbio.fq
 cat ${BASENAME}_0001.maf | paste - - - - | awk -F"\t" '!($(NF-1)~/N/)' | shuf --random-source=../seed | tr "\t" "\n" > $BASENAME.sim.maf
@@ -41,10 +43,12 @@ if [[ $a == "illumina" ]]; then
     LENGTH=$ILLUMINA_LENGTH
     XDROP=$ILLUMINA_XDROP
     SEED_LENGTH=$ILLUMINA_SEED_LENGTH
+    MIN_EXACT_MATCH=$ILLUMINA_MIN_EXACT_MATCH
 else
     LENGTH=$PACBIO_LENGTH
     XDROP=$PACBIO_XDROP
     SEED_LENGTH=$PACBIO_SEED_LENGTH
+    MIN_EXACT_MATCH=$PACBIO_MIN_EXACT_MATCH
 fi
 
 echo "Aligning to whole graph"
@@ -54,7 +58,7 @@ echo "   parasail"
 ../run_parasail.sh $BASENAME $a $LENGTH metagraph_base.out > $BASENAME.sim.$a.metagraph_base.out.results.sam
 
 echo "Aligning by coords"
-/usr/bin/time -v $METAGRAPH align $FLAGS --align-chain --align-max-seed-length $SEED_LENGTH --align-xdrop 100 -i $BASENAME.dbg $BASENAME.sim.$a.fq -a $BASENAME.${COORD_TYPE}_coord.annodbg > $BASENAME.sim.$a.metagraph_coord.out 2> $BASENAME.sim.$a.metagraph_coord.log
+/usr/bin/time -v $METAGRAPH align $FLAGS --align-chain --align-min-exact-match $MIN_EXACT_MATCH --align-max-seed-length $SEED_LENGTH --align-xdrop 100 -i $BASENAME.dbg $BASENAME.sim.$a.fq -a $BASENAME.${COORD_TYPE}_coord.annodbg > $BASENAME.sim.$a.metagraph_coord.out 2> $BASENAME.sim.$a.metagraph_coord.log
 awk -F"\t" '{print ">1\n"$4}' $BASENAME.sim.$a.metagraph_coord.out > $BASENAME.sim.$a.metagraph_coord.out.fa
 echo "   parasail"
 ../run_parasail.sh $BASENAME $a $LENGTH metagraph_coord.out > $BASENAME.sim.$a.metagraph_coord.out.results.sam
@@ -83,6 +87,13 @@ echo "Aligning with Pufferfish"
 bedtools getfasta -fi $BASENAME.fa -bed <(bedtools bamtobed -i $BASENAME.sim.$a.pufferfish.sam) | paste - - | awk '{print ">1\n"$2}' > $BASENAME.sim.$a.pufferfish.sam.fa
 echo "   parasail"
 ../run_parasail.sh $BASENAME $a $LENGTH pufferfish.sam > $BASENAME.sim.$a.pufferfish.sam.results.sam
+
+echo "GraphAligner"
+/usr/bin/time -v GraphAligner -g $BASENAME.gfa -f $BASENAME.sim.$a.fa -x vg -a temp.$a.gaf > $BASENAME.sim.$a.graphaligner.log 2>&1
+cat $BASENAME.sim.$a.fa | paste - - | cut -f1 | tr -d ">" | while read F; do echo "$(grep -F $F"	" temp.$a.gaf)" | head -n 1; done > $BASENAME.sim.$a.graphaligner.gaf
+samtools faidx $BASENAME.fa $(awk -F"\t" '{if (NF==0){printf("'$BASENAME':1-1 ")} else {left=$3; right=$2-$4; if ($6 == ">s1") { printf("'$BASENAME':%d-%d ",$8+1-left,$9+right)} else {printf("'$BASENAME':%d-%d ",$7-$9+1-right,$7-$8+left)} }}' $BASENAME.sim.$a.graphaligner.gaf) -n 100000 | paste - - | awk '{print ">1\n"$2}' | tr -d "N" > $BASENAME.sim.$a.graphaligner.gaf.fa
+echo "   parasail"
+../run_parasail.sh $BASENAME $a $LENGTH graphaligner.gaf > $BASENAME.sim.$a.graphaligner.gaf.results.sam
 
 done
 
