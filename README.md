@@ -8,4 +8,4 @@ bioRxiv 2021.11.09.467907; doi: https://doi.org/10.1101/2021.11.09.467907
 
 The algorithms and the Counting DBG data structure itself are implemented within [MetaGraph](https://github.com/ratschlab/metagraph).
 
-Note: all alignment experiments with MetaGraph were run on commit [b121c1d](https://github.com/ratschlab/metagraph/tree/121c1d9639ce9773805b4443a167a2927735d21c).
+Note: all alignment experiments with MetaGraph were run on commit [121c1d9](https://github.com/ratschlab/metagraph/tree/121c1d9639ce9773805b4443a167a2927735d21c).
