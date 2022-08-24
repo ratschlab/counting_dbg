@@ -4,7 +4,7 @@ This repository contains resources related to the manuscript describing [Countin
 
 **Lossless Indexing with Counting de Bruijn Graphs**<br>
 Mikhail Karasikov, Harun Mustafa, Gunnar Rätsch, André Kahles<br>
-bioRxiv 2021.11.09.467907; doi: https://doi.org/10.1101/2021.11.09.467907
+Genome Res. 2022; doi: https://doi.org/10.1101/gr.276607.122
 
 The algorithms and the Counting DBG data structure itself are implemented within [MetaGraph](https://github.com/ratschlab/metagraph).
 
